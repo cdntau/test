@@ -49,8 +49,8 @@ jobs:
             --seed-time=0 \
             --continue=true \
             --max-overall-upload-limit=1K \
-            --max-connection-per-server=32 \
-            --split=64 \
+            --max-connection-per-server=16 \
+            --split=16 \
             --min-split-size=1M \
             --enable-mmap=true \
             --disable-ipv6=true \
