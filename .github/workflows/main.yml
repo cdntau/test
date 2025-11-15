@@ -16,13 +16,12 @@ jobs:
 
     steps:
 
-      # 1. Maximum aggressive disk freeing
       - name: Maximize disk space (AGGRESSIVE)
         uses: easimon/maximize-build-space@v10
         with:
           root-reserve-mb: 200
           temp-reserve-mb: 50
-          swap-size-mb: 0
+          swap-size-mb: 1     # must not be 0
           overprovision-lvm: true
           build-mount-path: ${{ github.workspace }}
           pv-loop-path: /pv.img
