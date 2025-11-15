@@ -1,0 +1,115 @@
+name: Torrent To Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      torrent_url:
+        description: "URL to .torrent file or magnet link"
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+
+      # 1. Maximum aggressive disk freeing
+      - name: Maximize disk space (AGGRESSIVE)
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 200
+          temp-reserve-mb: 50
+          swap-size-mb: 0
+          overprovision-lvm: true
+          build-mount-path: ${{ github.workspace }}
+          pv-loop-path: /pv.img
+          tmp-pv-loop-path: /mnt/tmp-pv.img
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+
+      - name: Install aria2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2
+
+      # 2. Download torrent
+      - name: Download torrent using aria2
+        id: dl
+        run: |
+          mkdir dl
+          cd dl
+          LINK="${{ github.event.inputs.torrent_url }}"
+
+          aria2c \
+            --seed-time=0 \
+            --continue=true \
+            --max-overall-upload-limit=1K \
+            --max-connection-per-server=32 \
+            --split=64 \
+            --min-split-size=1M \
+            --enable-mmap=true \
+            --disable-ipv6=true \
+            --file-allocation=falloc \
+            "$LINK"
+
+          echo "download_dir=$(pwd)" >> $GITHUB_OUTPUT
+
+      # 3. Keep only video media
+      - name: Keep only video files
+        run: |
+          cd "${{ steps.dl.outputs.download_dir }}"
+          shopt -s globstar
+
+          exts="mp4 mkv mov avi mpeg mpg webm m4v flv wmv"
+
+          for file in **/*; do
+            [ -f "$file" ] || continue
+            keep=0
+            for e in $exts; do
+              [[ "$file" == *.$e ]] && keep=1
+            done
+            if [ $keep -eq 0 ]; then
+              rm -f "$file"
+            fi
+          done
+
+      # 4. Split >2 GiB into 1900 MB parts
+      - name: Split files if required
+        id: split
+        run: |
+          cd "${{ steps.dl.outputs.download_dir }}"
+          mkdir ../parts
+          cd ../parts
+
+          total_mb=$(du -sm "${{ steps.dl.outputs.download_dir }}" | cut -f1)
+          limit_mb=$((2 * 1024))
+
+          if [ "$total_mb" -le "$limit_mb" ]; then
+            cp -r "${{ steps.dl.outputs.download_dir }}"/* .
+          else
+            file=$(find "${{ steps.dl.outputs.download_dir }}" -type f | head -n 1)
+            base=$(basename "$file")
+            split -b 1900M "$file" "${base}.part_"
+          fi
+
+          echo "parts_dir=$(pwd)" >> $GITHUB_OUTPUT
+
+      # 5. Generate unique tag
+      - name: Generate unique tag
+        id: gentag
+        run: |
+          echo "tag=$(date +%s)-$RANDOM-$RANDOM" >> $GITHUB_OUTPUT
+
+      # 6. Upload release assets
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.gentag.outputs.tag }}"
+          files: "${{ steps.split.outputs.parts_dir }}/*"
+          fail_on_unmatched_files: false
